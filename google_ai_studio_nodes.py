@@ -269,7 +269,7 @@ class GoogleAIStudioTextGenNode:
                     "tooltip": "Controls randomness in generation (0=deterministic, 2=very creative)"
                 }),
                 "max_output_tokens": ("INT", {
-                    "default": 1024,
+                    "default": 8192,
                     "min": 1,
                     "max": 8192,
                     "step": 1,
@@ -279,7 +279,13 @@ class GoogleAIStudioTextGenNode:
                     "default": "off",
                     "tooltip": "Reasoning depth (Gemini 2.5/3 only). 'high' for complex tasks, 'low' for latency-sensitive."
                 }),
-                "safety_filter": (["OFF", "BLOCK_NONE", "BLOCK_LOW_AND_ABOVE", "BLOCK_MEDIUM_AND_ABOVE", "BLOCK_ONLY_HIGH"], {"default": "OFF"}),
+                "safety_filter": ([types.HarmBlockThreshold.OFF, 
+                    types.HarmBlockThreshold.BLOCK_NONE, 
+                    types.HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
+                    types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE, 
+                    types.HarmBlockThreshold.BLOCK_ONLY_HIGH], {
+                    "default": types.HarmBlockThreshold.BLOCK_NONE
+                }),
             }
         }
 
@@ -319,10 +325,10 @@ class GoogleAIStudioTextGenNode:
                 temperature=temperature,
                 max_output_tokens=max_output_tokens,
                 safety_settings=[
-                    types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold=safety_filter),
-                    types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold=safety_filter),
-                    types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold=safety_filter),
-                    types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold=safety_filter)
+                    types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold=safety_filter),
+                    types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_HARASSMENT, threshold=safety_filter),
+                    types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold=safety_filter),
+                    types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold=safety_filter)
                 ]
             )
             if thinking_level != "off":
