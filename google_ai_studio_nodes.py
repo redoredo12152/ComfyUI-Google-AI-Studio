@@ -22,6 +22,36 @@ except ImportError:
     print("Google AI SDK not available. Please install with: pip install google-genai")
 
 
+class GeminiPromptSplitter:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "text": ("STRING", {"forceInput": True}),
+                # 기본 구분자를 [NEGATIVE]로 설정했습니다.
+                "separator": ("STRING", {"default": "[NEGATIVE]"}),
+            }
+        }
+    
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("positive", "negative")
+    FUNCTION = "split_prompt"
+    CATEGORY = "Google-AI-Studio"
+
+    def split_prompt(self, text, separator):
+        # [NEGATIVE] 태그가 문장 안에 있으면 그 기준으로 쪼갭니다.
+        if separator in text:
+            parts = text.split(separator, 1)
+            positive = parts[0].strip()
+            negative = parts[1].strip()
+        else:
+            # 태그가 없으면 전부 긍정 프롬프트로 몰아넣습니다.
+            positive = text.strip()
+            negative = ""
+            
+        return (positive, negative)
+
+
 class GoogleAIStudioTTSNode:
     """
     Google AI Studio Text-to-Speech Node
@@ -825,6 +855,7 @@ NODE_CLASS_MAPPINGS = {
     "GoogleAIStudioMultiSpeakerTTS": GoogleAIStudioMultiSpeakerTTSNode,
     "GoogleAIStudioTextGen": GoogleAIStudioTextGenNode,
     "GoogleAIStudioImageGen": GoogleAIStudioImageGenNode,
+    "GeminiPromptSplitter": GeminiPromptSplitter
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -832,4 +863,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "GoogleAIStudioMultiSpeakerTTS": "Google AI Studio Multi-Speaker TTS",
     "GoogleAIStudioTextGen": "Google AI Studio Text Generator",
     "GoogleAIStudioImageGen": "Google AI Studio Image Generator",
+    "GeminiPromptSplitter": "Gemini Prompt Splitter"
 } 
