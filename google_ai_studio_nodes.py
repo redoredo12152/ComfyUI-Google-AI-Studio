@@ -282,6 +282,7 @@ class GoogleAIStudioTextGenNode:
                     "default": "off",
                     "tooltip": "Reasoning depth (Gemini 2.5/3 only). 'high' for complex tasks, 'low' for latency-sensitive."
                 }),
+                "safety_filter": (["OFF", "BLOCK_NONE", "BLOCK_LOW_AND_ABOVE", "BLOCK_MEDIUM_AND_ABOVE", "BLOCK_ONLY_HIGH"], {"default": "OFF"}),
             }
         }
 
@@ -298,7 +299,8 @@ class GoogleAIStudioTextGenNode:
 
     def generate_text(self, prompt: str, api_key: str, model: str, 
                      system_instruction: str = "", temperature: float = 0.7, 
-                     max_output_tokens: int = 1024, thinking_level: str = "off") -> tuple:
+                     max_output_tokens: int = 1024, thinking_level: str = "off", 
+                     safety_filter: str = "OFF") -> tuple:
         """
         Generate text using Google AI Studio
         """
@@ -319,6 +321,12 @@ class GoogleAIStudioTextGenNode:
             config_kwargs = dict(
                 temperature=temperature,
                 max_output_tokens=max_output_tokens,
+                safety_settings=[
+                    types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold=safety_filter),
+                    types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold=safety_filter),
+                    types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold=safety_filter),
+                    types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold=safety_filter)
+                ]
             )
             if thinking_level != "off":
                 config_kwargs["thinking_config"] = types.ThinkingConfig(
