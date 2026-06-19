@@ -230,16 +230,13 @@ class GoogleAIStudioTextGenNode:
     # Updated per https://ai.google.dev/gemini-api/docs/changelog and deprecations
     # Deprecated/removed: gemini-3-pro-preview (Mar 2026), gemini-2.0-flash-* (Feb 2026)
     TEXT_MODELS = [
-        "gemini-3.1-pro-preview",
-        "gemini-3.1-flash-lite-preview",
-        "gemini-3-flash-preview",
+        "gemini-3.5-flash",
+        "gemini-3.1-pro",
+        "gemini-3.1-flash-lite",
+        "gemini-3-flash",
         "gemini-2.5-pro",
         "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
-        "gemini-2.0-flash-thinking-001",
-        "gemini-1.5-pro-002",
-        "gemini-1.5-flash-002",
-        "gemini-1.5-flash-8b-001",
     ]
 
     @classmethod
@@ -255,7 +252,7 @@ class GoogleAIStudioTextGenNode:
                     "tooltip": "Your Google AI Studio API key"
                 }),
                 "model": (cls.TEXT_MODELS, {
-                    "default": "gemini-2.5-flash"
+                    "default": "gemini-3.1-flash-lite"
                 }),
             },
             "optional": {
