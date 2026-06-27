@@ -256,69 +256,32 @@ class GoogleAIStudioTextGenNode:
     Google AI Studio Text Generation Node
     Generates text using Google's Gemini models
     """
-    
-    # Updated per https://ai.google.dev/gemini-api/docs/changelog and deprecations
-    # Deprecated/removed: gemini-3-pro-preview (Mar 2026), gemini-2.0-flash-* (Feb 2026)
     TEXT_MODELS = [
-        "gemini-3.5-flash",
-        "gemini-3.1-pro",
-        "gemini-3.1-flash-lite",
-        "gemini-3-flash",
-        "gemini-2.5-pro",
-        "gemini-2.5-flash",
-        "gemini-2.5-flash-lite",
+        "gemini-3.5-flash", "gemini-3.1-pro", "gemini-3.1-flash-lite",
+        "gemini-3-flash", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite",
     ]
+    
+    # 👑 [비상용 메모리 & 다양성 참조용] 
+    last_successful_text = ""
 
     @classmethod
     def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "prompt": ("STRING", {
-                    "multiline": True,
-                    "default": "Write a creative short story about artificial intelligence."
-                }),
-                "api_key": ("STRING", {
-                    "default": "",
-                    "tooltip": "Your Google AI Studio API key"
-                }),
-                "model": (cls.TEXT_MODELS, {
-                    "default": "gemini-3.1-flash-lite"
-                }),
-            },
-            "optional": {
-                "system_instruction": ("STRING", {
-                    "multiline": True,
-                    "default": "",
-                    "tooltip": "System instruction to guide the model's behavior"
-                }),
-                "temperature": ("FLOAT", {
-                    "default": 0.7,
-                    "min": 0.0,
-                    "max": 2.0,
-                    "step": 0.1,
-                    "tooltip": "Controls randomness in generation (0=deterministic, 2=very creative)"
-                }),
-                "max_output_tokens": ("INT", {
-                    "default": 8192,
-                    "min": 1,
-                    "max": 8192,
-                    "step": 1,
-                    "tooltip": "Maximum number of tokens to generate"
-                }),
-                "thinking_level": (["off", "low", "medium", "high"], {
-                    "default": "off",
-                    "tooltip": "Reasoning depth (Gemini 2.5/3 only). 'high' for complex tasks, 'low' for latency-sensitive."
-                }),
-                "safety_filter": ([types.HarmBlockThreshold.OFF, 
-                    types.HarmBlockThreshold.BLOCK_NONE, 
-                    types.HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
-                    types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE, 
-                    types.HarmBlockThreshold.BLOCK_ONLY_HIGH], {
-                    "default": types.HarmBlockThreshold.BLOCK_NONE
-                }),
-            }
+        return {"required": {
+                    "prompt": ("STRING", {"multiline": True, "default": "Write a creative short story about artificial intelligence."}),
+                    "api_key": ("STRING", {"default": "", "tooltip": "Your Google AI Studio API key"}),
+                    "model": (cls.TEXT_MODELS, {"default": "gemini-3.1-flash-lite"}),
+                },
+                "optional": {
+                    "system_instruction": ("STRING", {"multiline": True, "default": "", "tooltip": "System instruction to guide the model's behavior"}),
+                    "temperature": ("FLOAT", {"default": 0.7, "min": 0.0, "max": 2.0, "step": 0.1, "tooltip": "Controls randomness in generation (0=deterministic, 2=very creative)"}),
+                    "max_output_tokens": ("INT", {"default": 8192, "min": 1, "max": 8192, "step": 1, "tooltip": "Maximum number of tokens to generate"}),
+                    "thinking_level": (["off", "low", "medium", "high"], {"default": "off", "tooltip": "Reasoning depth (Gemini 2.5/3 only)."}),
+                    "safety_filter": ([types.HarmBlockThreshold.OFF, types.HarmBlockThreshold.BLOCK_NONE, types.HarmBlockThreshold.BLOCK_LOW_AND_ABOVE, types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE, types.HarmBlockThreshold.BLOCK_ONLY_HIGH], {"default": types.HarmBlockThreshold.BLOCK_NONE}),
+                    # 🎲 다양성 강제 옵션 추가
+                    "diversity_mode": (["off", "on"], {"default": "off", "tooltip": "If on, forces the model to generate different options from the previous output."}),
+                }
         }
-
+        
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("text",)
     FUNCTION = "generate_text"
@@ -327,64 +290,86 @@ class GoogleAIStudioTextGenNode:
 
     @classmethod
     def IS_CHANGED(cls, **kwargs):
-        """Always re-execute to get fresh text generation"""
+        # 매번 무조건 새롭게 실행되도록 난수(NaN) 반환
         return float("NaN")
 
-    def generate_text(self, prompt: str, api_key: str, model: str, 
-                     system_instruction: str = "", temperature: float = 0.7, 
-                     max_output_tokens: int = 1024, thinking_level: str = "off", 
-                     safety_filter: str = "OFF") -> tuple:
-        """
-        Generate text using Google AI Studio
-        """
+    def generate_text(self, prompt: str, api_key: str, model: str, system_instruction: str = "", temperature: float = 0.7, max_output_tokens: int = 1024, thinking_level: str = "off", safety_filter: str = "OFF", diversity_mode: str = "off") -> tuple:
+        import time 
+        
         if not GOOGLE_AI_AVAILABLE:
             raise Exception("Google AI SDK not installed. Please install with: pip install google-genai")
-        
         if not api_key.strip():
             raise Exception("API key is required. Get one from https://aistudio.google.com/")
+
+        # ==========================================
+        # 🎲 다양성 강제 (Diversity Enforcement) 로직
+        # ==========================================
+        final_prompt = prompt
         
-        try:
-            # Set up the API key
-            os.environ['GOOGLE_API_KEY'] = api_key.strip()
-            
-            # Initialize the client
-            client = genai.Client()
-            
-            # Prepare generation config
-            config_kwargs = dict(
-                temperature=temperature,
-                max_output_tokens=max_output_tokens,
-                safety_settings=[
-                    types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold=safety_filter),
-                    types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_HARASSMENT, threshold=safety_filter),
-                    types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold=safety_filter),
-                    types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold=safety_filter)
-                ]
+        # diversity_mode가 on이고, 이전에 성공한 텍스트가 존재할 때만 발동
+        if diversity_mode == "on" and GoogleAIStudioTextGenNode.last_successful_text != "":
+            diversity_msg = (
+                "\n\n[CRITICAL RULE: DIVERSITY ENFORCEMENT]\n"
+                "Here is the PREVIOUS output you generated. You MUST NOT reuse the exact same specific attributes "
+                "(e.g., body type, clothing, pose, background, ethnicity) that were used here. "
+                "You must strictly force yourself to choose COMPLETELY DIFFERENT options from the randomization grid for this new generation.\n\n"
+                f"--- PREVIOUS OUTPUT ---\n{GoogleAIStudioTextGenNode.last_successful_text}\n-----------------------\n\n"
+                "Now, generate a newly randomized prompt following the original rules."
             )
-            if thinking_level != "off":
-                config_kwargs["thinking_config"] = types.ThinkingConfig(
-                    thinking_level=thinking_level.upper()
+            # 기존 프롬프트 맨 밑에 강력한 지시문과 이전 답변을 이어붙입니다.
+            final_prompt = final_prompt + diversity_msg
+
+        # ==========================================
+        # ⚙️ 재시도(Retry) 설정
+        # ==========================================
+        max_retries = 3
+        retry_delay = 2
+
+        for attempt in range(max_retries):
+            try:
+                os.environ['GOOGLE_API_KEY'] = api_key.strip()
+                client = genai.Client()
+
+                config_kwargs = dict(
+                    temperature=temperature,
+                    max_output_tokens=max_output_tokens,
+                    safety_settings=[
+                        types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold=safety_filter),
+                        types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_HARASSMENT, threshold=safety_filter),
+                        types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold=safety_filter),
+                        types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold=safety_filter)
+                    ]
                 )
-            generation_config = types.GenerateContentConfig(**config_kwargs)
-            
-            # Add system instruction if provided
-            if system_instruction.strip():
-                generation_config.system_instruction = system_instruction.strip()
-            
-            # Generate the text
-            response = client.models.generate_content(
-                model=model,
-                contents=prompt,
-                config=generation_config
-            )
-            
-            # Extract the generated text
-            generated_text = response.text if response.text else ""
-            
-            return (generated_text,)
-            
-        except Exception as e:
-            raise Exception(f"Text generation failed: {str(e)}")
+                
+                if thinking_level != "off":
+                    config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=thinking_level.upper())
+                    
+                generation_config = types.GenerateContentConfig(**config_kwargs)
+
+                if system_instruction.strip():
+                    generation_config.system_instruction = system_instruction.strip()
+
+                # 📡 Gemini API 호출 (수정된 final_prompt 사용)
+                response = client.models.generate_content(model=model, contents=final_prompt, config=generation_config)
+                generated_text = response.text if response.text else ""
+                
+                # 🎯 성공했다면 다음 턴의 '다양성'과 '비상용'을 위해 메모리 업데이트
+                if generated_text.strip():
+                    GoogleAIStudioTextGenNode.last_successful_text = generated_text
+                    
+                return (generated_text,)
+
+            except Exception as e:
+                print(f"⚠️ [API 시도 {attempt + 1}/{max_retries}] 에러 발생: {e}")
+                
+                if attempt < max_retries - 1:
+                    print(f"🔄 {retry_delay}초 후 다시 시도합니다...")
+                    time.sleep(retry_delay)
+                else:
+                    print("❌ 모든 재시도가 실패했습니다. 이전 성공 텍스트를 반환합니다.")
+                    # 완전 첫 실행부터 3번 다 실패했을 경우에 대한 최후의 보루
+                    fallback = GoogleAIStudioTextGenNode.last_successful_text if GoogleAIStudioTextGenNode.last_successful_text else "(error_fallback:1.2), beautiful realistic photo of a young woman"
+                    return (fallback,)
 
 
 class GoogleAIStudioImageGenNode:
