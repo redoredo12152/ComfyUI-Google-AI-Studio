@@ -253,16 +253,16 @@ class GoogleAIStudioTTSNode:
 
 class GoogleAIStudioTextGenNode:
     """
-    Google AI Studio Text Generation Node
-    Generates text using Google's Gemini models
+    Google AI Studio Text Generation Node (Advanced Memory Edition)
+    Generates text using Google's Gemini models with historical diversity tracking.
     """
     TEXT_MODELS = [
         "gemini-3.5-flash", "gemini-3.1-pro", "gemini-3.1-flash-lite",
         "gemini-3-flash", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite",
     ]
     
-    # 👑 [비상용 메모리 & 다양성 참조용] 
-    last_successful_text = ""
+    # 👑 [메모리 저장소] 최근 성공한 프롬프트들을 순서대로 담는 리스트(Queue)
+    history_buffer = []
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -277,8 +277,12 @@ class GoogleAIStudioTextGenNode:
                     "max_output_tokens": ("INT", {"default": 8192, "min": 1, "max": 8192, "step": 1, "tooltip": "Maximum number of tokens to generate"}),
                     "thinking_level": (["off", "low", "medium", "high"], {"default": "off", "tooltip": "Reasoning depth (Gemini 2.5/3 only)."}),
                     "safety_filter": ([types.HarmBlockThreshold.OFF, types.HarmBlockThreshold.BLOCK_NONE, types.HarmBlockThreshold.BLOCK_LOW_AND_ABOVE, types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE, types.HarmBlockThreshold.BLOCK_ONLY_HIGH], {"default": types.HarmBlockThreshold.BLOCK_NONE}),
-                    # 🎲 다양성 강제 옵션 추가
-                    "diversity_mode": (["off", "on"], {"default": "off", "tooltip": "If on, forces the model to generate different options from the previous output."}),
+                    
+                    # 🎲 다양성 강제 모드
+                    "diversity_mode": (["off", "on"], {"default": "off", "tooltip": "If on, forces the model to generate different options from previous outputs."}),
+                    
+                    # 📚 기억할 이전 응답 개수 (기본 5개, 최대 20개까지 설정 가능)
+                    "history_count": ("INT", {"default": 5, "min": 1, "max": 20, "step": 1, "tooltip": "Number of previous outputs to remember for diversity generation."}),
                 }
         }
         
@@ -286,14 +290,14 @@ class GoogleAIStudioTextGenNode:
     RETURN_NAMES = ("text",)
     FUNCTION = "generate_text"
     CATEGORY = "Google AI Studio"
-    DESCRIPTION = "Generate text using Google AI Studio models"
+    DESCRIPTION = "Generate text using Google AI Studio models with History Memory"
 
     @classmethod
     def IS_CHANGED(cls, **kwargs):
-        # 매번 무조건 새롭게 실행되도록 난수(NaN) 반환
+        # 무한 랜덤 생성을 위해 매번 새로운 값(NaN) 반환
         return float("NaN")
 
-    def generate_text(self, prompt: str, api_key: str, model: str, system_instruction: str = "", temperature: float = 0.7, max_output_tokens: int = 1024, thinking_level: str = "off", safety_filter: str = "OFF", diversity_mode: str = "off") -> tuple:
+    def generate_text(self, prompt: str, api_key: str, model: str, system_instruction: str = "", temperature: float = 0.7, max_output_tokens: int = 1024, thinking_level: str = "off", safety_filter: str = "OFF", diversity_mode: str = "off", history_count: int = 5) -> tuple:
         import time 
         
         if not GOOGLE_AI_AVAILABLE:
@@ -302,25 +306,28 @@ class GoogleAIStudioTextGenNode:
             raise Exception("API key is required. Get one from https://aistudio.google.com/")
 
         # ==========================================
-        # 🎲 다양성 강제 (Diversity Enforcement) 로직
+        # 🎲 다중 기억 기반 다양성 강제 (Diversity Enforcement) 로직
         # ==========================================
         final_prompt = prompt
         
-        # diversity_mode가 on이고, 이전에 성공한 텍스트가 존재할 때만 발동
-        if diversity_mode == "on" and GoogleAIStudioTextGenNode.last_successful_text != "":
+        # diversity_mode가 on이고, 메모리에 1개 이상의 이전 응답이 있을 때 발동
+        if diversity_mode == "on" and len(GoogleAIStudioTextGenNode.history_buffer) > 0:
+            
+            # 저장된 이전 응답들을 보기 좋게 [1], [2] 번호를 매겨 하나의 텍스트로 묶음
+            history_text = "\n\n".join([f"[{i+1}] {text}" for i, text in enumerate(GoogleAIStudioTextGenNode.history_buffer)])
+            
             diversity_msg = (
                 "\n\n[CRITICAL RULE: DIVERSITY ENFORCEMENT]\n"
-                "Here is the PREVIOUS output you generated. You MUST NOT reuse the exact same specific attributes "
-                "(e.g., body type, clothing, pose, background, ethnicity) that were used here. "
-                "You must strictly force yourself to choose COMPLETELY DIFFERENT options from the randomization grid for this new generation.\n\n"
-                f"--- PREVIOUS OUTPUT ---\n{GoogleAIStudioTextGenNode.last_successful_text}\n-----------------------\n\n"
+                "Here is a history of your RECENT outputs. You MUST NOT reuse the exact same specific attributes "
+                "(e.g., body type, clothing, pose, background, ethnicity) that were used in ANY of these past generations. "
+                "You must strictly force yourself to choose COMPLETELY DIFFERENT options for this new generation.\n\n"
+                f"--- PAST OUTPUT HISTORY ---\n{history_text}\n---------------------------\n\n"
                 "Now, generate a newly randomized prompt following the original rules."
             )
-            # 기존 프롬프트 맨 밑에 강력한 지시문과 이전 답변을 이어붙입니다.
             final_prompt = final_prompt + diversity_msg
 
         # ==========================================
-        # ⚙️ 재시도(Retry) 설정
+        # ⚙️ 에러 방어 및 재시도(Retry) 설정
         # ==========================================
         max_retries = 3
         retry_delay = 2
@@ -349,13 +356,17 @@ class GoogleAIStudioTextGenNode:
                 if system_instruction.strip():
                     generation_config.system_instruction = system_instruction.strip()
 
-                # 📡 Gemini API 호출 (수정된 final_prompt 사용)
+                # 📡 Gemini API 호출
                 response = client.models.generate_content(model=model, contents=final_prompt, config=generation_config)
                 generated_text = response.text if response.text else ""
                 
-                # 🎯 성공했다면 다음 턴의 '다양성'과 '비상용'을 위해 메모리 업데이트
+                # 🎯 성공 처리: 큐(Queue) 방식으로 버퍼 밀어내기
                 if generated_text.strip():
-                    GoogleAIStudioTextGenNode.last_successful_text = generated_text
+                    GoogleAIStudioTextGenNode.history_buffer.append(generated_text.strip())
+                    
+                    # 설정한 개수(history_count)를 초과하면 가장 오래된(첫 번째) 응답을 버림
+                    if len(GoogleAIStudioTextGenNode.history_buffer) > history_count:
+                        GoogleAIStudioTextGenNode.history_buffer.pop(0)
                     
                 return (generated_text,)
 
@@ -366,11 +377,12 @@ class GoogleAIStudioTextGenNode:
                     print(f"🔄 {retry_delay}초 후 다시 시도합니다...")
                     time.sleep(retry_delay)
                 else:
-                    print("❌ 모든 재시도가 실패했습니다. 이전 성공 텍스트를 반환합니다.")
-                    # 완전 첫 실행부터 3번 다 실패했을 경우에 대한 최후의 보루
-                    fallback = GoogleAIStudioTextGenNode.last_successful_text if GoogleAIStudioTextGenNode.last_successful_text else "(error_fallback:1.2), beautiful realistic photo of a young woman"
+                    print(f"❌ 모든 재시도가 실패했습니다. 최신 성공 텍스트를 반환하여 에러를 우회합니다.")
+                    
+                    # 메모리에 저장된 기록이 있다면 가장 마지막(-1) 성공 응답을 반환, 
+                    # 쌩초반부터 터졌다면 하드코딩된 에러용 프롬프트를 반환
+                    fallback = GoogleAIStudioTextGenNode.history_buffer[-1] if len(GoogleAIStudioTextGenNode.history_buffer) > 0 else "(error_fallback:1.2), highly detailed photo of a woman"
                     return (fallback,)
-
 
 class GoogleAIStudioImageGenNode:
     """
